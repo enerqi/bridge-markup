@@ -25,6 +25,13 @@ Content_Kind :: enum {
 	Bidding,
 }
 
+/*
+One classified block. Which fields carry anything depends on `kind` - see the comments below.
+
+It is a struct with unused fields rather than a union because consumers switch on `kind` and then
+read one field; a union would buy 40-odd bytes per block and cost every caller a type assertion.
+Blocks are arena-allocated with the document and die with it.
+*/
 Block :: struct {
 	kind:    Content_Kind,
 	// `Paragraph` and the headings.
@@ -67,6 +74,28 @@ Classify one block, and fold `#VUL`, `#SEAT` and `#+META:` lines into the parse 
 
 Returns `ok = false` for a block that produced no content: the settings directives, a metadata line,
 and whitespace all land here.
+
+# THE ORDER OF THESE TESTS IS LOAD-BEARING
+
+They are tried in sequence and the FIRST MATCH WINS. Several blocks satisfy more than one test - a
+bid table's first row starts with a digit and so does an auction table's first token; a diagram line
+starts with a letter and so does prose - so this is not a sequence that can be sorted, rearranged
+into a switch on the first byte, or reasoned about one clause at a time. Reordering silently
+reclassifies real corpus content, and the symptom is not a crash: it is a paragraph appearing where
+a diagram used to be dropped.
+
+A block that matches NOTHING falls through to the paragraph test, which accepts anything holding a
+non-space character. That is the trap. A block kind whose detection is too strict does not vanish -
+it becomes a visible paragraph. This matters most for the kinds html never renders (`Diagram`,
+`Table`, `Bidding`, `Description`): they are dropped by the renderer, so detecting them correctly is
+the only thing keeping them out of the output.
+
+# IT IS ALSO STATEFUL
+
+`#VUL`, `#SEAT` and `#+META:` mutate `state` as they go past, and every bid table built afterwards
+inherits the current vulnerability and seat. Blocks must therefore be classified strictly in
+document order, one at a time - this loop must not become parallel. Each block is a few microseconds
+of work, so there is nothing to gain by trying.
 */
 @(private)
 classify_block :: proc(state: ^Parse_State, text: string) -> (block: Block, ok: bool) {

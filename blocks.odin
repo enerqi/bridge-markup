@@ -228,6 +228,14 @@ parse_diagram :: proc(text: string, allocator := context.allocator) -> (Diagram,
 	return diagram, true
 }
 
+/*
+One hand of a diagram: `N: AKQ2 J43 T98 765`, with the colon optional.
+
+Exactly four suits, whitespace separated, spelled with ranks, `x` for a small card or `-` for a
+void. Anything else fails the whole line, which is what keeps prose starting with `S` or `W` from
+counting as a hand - and, through the count test in `parse_diagram`, from turning a paragraph into
+a silently dropped diagram.
+*/
 @(private = "file")
 parse_hand_line :: proc(line: string, allocator := context.allocator) -> (seat: byte, suits: [4]string, ok: bool) {
 	cursor := leading_space_count(line)

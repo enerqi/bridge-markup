@@ -12,6 +12,11 @@ defer bml.destroy(doc)
 html := bml.render_html(doc)
 ```
 
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is the implementation guide: the pipeline, why the block
+classifier's test order is load-bearing, the memory model, everything reproduced bug-for-bug on
+purpose, and how to debug a parity failure. Read `~/dev/bml/ARCHITECTURE.md` alongside it for how
+BML parsing works in the first place — that is the reference's document and is not repeated here.
+
 ## Why this exists
 
 It is a port of the python in [`enerqi/bml`](https://github.com/enerqi/bml) (a fork of
@@ -111,7 +116,7 @@ import "libs/toml"                  # or through a collection: -collection:libs=
 ├── <pkg>_test.odin
 ├── examples/
 │   └── basic.odin       <- package main, built with -file
-└── justfile  README.md  ...
+└── justfile  .just/  README.md  ...
 ```
 
 **The package name must be a valid Odin identifier**, which a repository name often is not: `odin-toml` is a fine
@@ -187,7 +192,7 @@ and the examples are what prove the package is usable from outside it:
 * `just lint` — type checking, vet warnings, strict style. No code generation
 * `just format` — runs the pinned `odinfmt -w .` over the whole tree, fetching it first if needed
 * `just fetch-ols` — install the pinned `ols` + `odinfmt` into `~/.odin-tools` (`--check` / `--force`)
-* `just bump-ols [TAG]` — rewrite the pin in the justfile to the latest (or named) ols release (`--check`)
+* `just bump-ols [TAG]` — rewrite the pin in `.just/toolchain.just` to the latest (or named) ols release (`--check`)
 * `just test` / `just test1 NAME` — run all tests / one named test
 * `just test_sanitize [KIND]` — run the tests under a sanitizer. `KIND` is
   `address` (default), `memory` or `thread`. Only `address` is widely supported; `memory` and `thread` need a
@@ -245,7 +250,7 @@ release, has **no `--version` flag**, and two releases format the same source di
 you nothing about which one it is, and the failure mode is a developer running `just format`, getting a clean local
 tree, and failing a CI diff on files they never touched.
 
-The justfile therefore pins the ols release and formats with that copy:
+`.just/toolchain.just` therefore pins the ols release and formats with that copy:
 
 ```
 ols_tag    := "dev-2026-06"
@@ -284,7 +289,7 @@ runs the two recipes below for you, warning rather than failing if either cannot
 for keeping an existing project current.
 
 **Bumping the pin.** `just bump-ols` reads the latest release from GitHub's API and rewrites `ols_tag` and all
-five digests in the justfile for you — copying six values by hand is where a wrong pin comes from:
+five digests in `.just/toolchain.just` for you — copying six values by hand is where a wrong pin comes from:
 
 ```
 just bump-ols                 # rewrite the pin to the latest release
@@ -294,7 +299,7 @@ just fetch-ols --force        # install it; the digests just written are checked
 just format                   # review this diff - see below
 ```
 
-It edits the justfile and stops: no fetch, no format, no commit. `/releases/latest` skips prereleases, which is
+It edits `.just/toolchain.just` and stops: no fetch, no format, no commit. `/releases/latest` skips prereleases, which is
 what keeps the continuously re-cut `nightly` tag out of it — a moving tag cannot be hash-pinned. Digests come from
 the API's per-asset `digest` field; an older release without one is downloaded and hashed instead.
 

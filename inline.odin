@@ -221,6 +221,9 @@ write_plain :: proc(parent: ^Element, text: string, allocator := context.allocat
 	attach_text(parent, text[pos:], allocator)
 }
 
+// How far a digit-led suit run reaches. `N` counts only when NOT followed by `T`, so `2N` is a run
+// and `1NT` is not one at all - the run needs at least one letter, so the match fails outright and
+// `1NT` stays literal text.
 @(private = "file")
 suit_run_end :: proc(text: string, digit_at: int) -> int {
 	i := digit_at + 1

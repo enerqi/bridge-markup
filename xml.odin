@@ -82,6 +82,7 @@ concat_if :: proc(existing, addition: string, allocator := context.allocator) ->
 	return strings.concatenate({existing, addition}, allocator)
 }
 
+// Serialise a tree the way `ET.tostring` does. See `write_escaped` for the encoding rules.
 @(private)
 serialise :: proc(root: ^Element, allocator := context.allocator) -> string {
 	out := strings.builder_make(0, 64 * 1024, allocator)
@@ -89,6 +90,12 @@ serialise :: proc(root: ^Element, allocator := context.allocator) -> string {
 	return strings.to_string(out)
 }
 
+/*
+One element: its tag, its attributes in INSERTION ORDER, then text, children and closing tag.
+
+The tail is written after the closing tag because it belongs to the parent's content, not to this
+element - that is the ElementTree model, and it is what makes mixed content round-trip.
+*/
 @(private = "file")
 write_element :: proc(out: ^strings.Builder, el: ^Element) {
 	strings.write_byte(out, '<')

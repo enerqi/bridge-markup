@@ -100,6 +100,8 @@ is_call_shaped :: proc(text: string) -> bool {
 	return is_explicit_call(text)
 }
 
+// A bid written as a markdown link, `[1D](#1C--1D)`. Its TARGET legitimately contains `--`, which
+// is why such a token is never split into an auction.
 @(private = "file")
 is_link_token :: proc(text: string) -> bool {
 	if !strings.has_prefix(text, "[") {

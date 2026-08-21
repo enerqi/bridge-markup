@@ -40,6 +40,21 @@ Parse BML source into blocks.
 
 Takes SOURCE TEXT rather than a path, which is the whole point of the port: a live preview renders
 the buffer someone is still typing, and it has not been saved anywhere.
+
+Four text-level passes, then a classification loop, and the order of the passes matters:
+
+ 1. NEWLINES are normalised first, because every pass after this one is written against `\n`.
+ 2. INCLUDES are expanded next, so an included file's blocks split on the same rules as the host's.
+    One pass only - an include inside an included file is not expanded, as in the reference.
+ 3. COMMENT LINES go before block splitting, so a commented-out line cannot hold two halves of a
+    paragraph together.
+ 4. BLOCKS are split on blank lines. This is the whole "grammar": everything below is a block at a
+    time.
+
+Then `classify_block` per block, IN ORDER - it mutates the parse state as it goes, so the loop is
+sequential by construction. See the note on that procedure.
+
+The returned document owns everything it points at; `destroy` frees it in one go.
 */
 parse :: proc(source: string, options := Parse_Options{}) -> ^Document {
 	doc := new(Document)
@@ -66,6 +81,12 @@ parse :: proc(source: string, options := Parse_Options{}) -> ^Document {
 	return doc
 }
 
+/*
+Free a document and everything in it.
+
+One arena reset: every block, list item, string and `Node` goes at once. Anything still holding a
+`^Node`, a `Block` or a `string` taken out of this document is dangling afterwards, so copy first.
+*/
 destroy :: proc(doc: ^Document) {
 	if doc == nil {
 		return

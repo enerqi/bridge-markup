@@ -91,6 +91,16 @@ take_clipboard_block :: proc(
 	return strings.to_string(out), true
 }
 
+/*
+Drop a stored region in at the paste site.
+
+Re-indented to the `#PASTE` line's own column, which is what lets one fragment be shared between a
+top-level table and a nested one. The `target=replacement` pairs on the paste line are applied to
+the text before it is inserted, so a fragment written for one suit can be reused for another.
+
+An unknown name is a DIAGNOSTIC here, not an error. The reference raises `KeyError` and takes the
+build down; a preview parses half-typed text on every keystroke and has to degrade instead.
+*/
 @(private = "file")
 apply_paste :: proc(state: ^Parse_State, text: string) -> (result: string, ok: bool) {
 	directive := find_directive(text, "PASTE") or_return
@@ -152,6 +162,8 @@ take_bidtable_directive :: proc(text: string) -> string {
 	return text[directive.line_past:]
 }
 
+// Scan line by line for the first `#<keyword>` line. `needs_key` distinguishes the directives that
+// name something (`#CUT frag`) from the bare ones (`#HIDE`), which must own their whole line.
 @(private = "file")
 find_directive :: proc(text: string, keyword: string, needs_key := true) -> (directive: Directive, ok: bool) {
 	line_start := 0

@@ -12,7 +12,16 @@ row's child. `indentation` is kept because the builder needs it while walking ba
 `desc` holds continuation lines joined by a LITERAL BACKSLASH-N (two characters), not a newline -
 that is the python's marker for "the author wrapped this description over several lines", and the
 html renderer splits on it to lay the extra rows out under the bid. `desc_rows` is the way to read
-it back.
+it back. The marker is kept rather than replaced with a `[]string` so a node dumped from here can be
+compared directly against the reference's parse output when a parity failure needs isolating.
+
+LIFETIME: nodes come from the owning `Document`'s arena, as do the `children` array and every string
+on them. They are freed together with the document, so a `^Node` must not outlive it. Nothing frees
+an individual node - `#CUT` discards a whole subtree by never building it.
+
+The `parent` pointer exists for two reasons: the builder walks back UP it when a row is less
+indented than the one before, and `node_sequence` reconstructs the auction from a leaf. `add_child`
+is the only thing that ever sets it.
 */
 Node :: struct {
 	bid:              string,
