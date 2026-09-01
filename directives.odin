@@ -1,6 +1,5 @@
 package bml
 
-import "core:fmt"
 import "core:strings"
 
 /*
@@ -106,13 +105,18 @@ apply_paste :: proc(state: ^Parse_State, text: string) -> (result: string, ok: b
 	directive := find_directive(text, "PASTE") or_return
 
 	stored, found := state.clipboard[directive.key]
+	// The block may already have been rewritten by an earlier paste, in which case `text` is not a
+	// slice of the working text any more and `span_of` says so rather than guessing - see
+	// `working_offset`.
+	line_length := directive.line_past - directive.start
+	at := span_of(state, text, within = directive.start + directive.indent, length = line_length - directive.indent)
 	if !found {
-		diagnose(state, "#PASTE %v: nothing was cut or copied under that name", directive.key)
+		diagnose_at(state, at, .Error, "#PASTE %v: nothing was cut or copied under that name", directive.key)
 	}
 	for pair in strings.fields(directive.args, context.temp_allocator) {
 		eq := strings.index_byte(pair, '=')
 		if eq < 0 {
-			diagnose(state, "#PASTE %v: %q is not target=replacement", directive.key, pair)
+			diagnose_at(state, at, .Error, "#PASTE %v: %q is not target=replacement", directive.key, pair)
 			continue
 		}
 		stored, _ = strings.replace_all(stored, pair[:eq], pair[eq + 1:], context.temp_allocator)
@@ -241,9 +245,4 @@ dedent :: proc(text: string, count: int, allocator := context.allocator) -> stri
 		strings.write_string(&out, len(line) > count ? line[count:] : "")
 	}
 	return strings.to_string(out)
-}
-
-@(private)
-diagnose :: proc(state: ^Parse_State, format: string, args: ..any) {
-	append(&state.diagnostics, fmt.aprintf(format, ..args, allocator = state.allocator))
 }

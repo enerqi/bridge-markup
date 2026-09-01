@@ -266,8 +266,13 @@ The id form of a heading, used both for the heading's own `id` and for the targe
 
 Spaces become underscores and a `<digit><suit letter>` pair is lowercased, so a cross-reference
 written `[1D](#1C--1D)` lands on the anchor the heading generated.
+PUBLIC, and the reason is a second consumer rather than tidiness: a HOST that has both the source and the
+rendered page needs to find the element a source heading became, and the rendered heading's TEXT will not
+do it - `* 1!c opening` renders as `1<span class="ccolor">a</span> opening`, so nothing in the document
+reads back as what was typed. The `id` is the only thing computed from the SOURCE text, which makes this
+procedure the mapping between the two halves. (The workbench's notes editor scrolls its preview to the
+heading the caret is under with it.)
 */
-@(private)
 normalise_header_id :: proc(text: string, allocator := context.allocator) -> string {
 	spaced, _ := strings.replace_all(text, " ", "_", context.temp_allocator)
 	trimmed := strings.trim_space(spaced)

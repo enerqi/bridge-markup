@@ -200,6 +200,44 @@ keystroke, so it degrades instead.
 
 Nothing else about the parse changes. A document with diagnostics still renders.
 
+### 5.5 A diagnostic carries a POSITION, and the map that gives it one
+
+`Diagnostic` is `{message, severity, file, line, col, length}`, not a sentence — an editor needs a
+range to squiggle and a build log needs the line in front of the sentence (`diagnostic_text` writes
+that form). `line`/`col` are 1-based, `col`/`length` are bytes, and a zero is "not known": no line at
+all, or the whole line, or to the end of it.
+
+The hard part is that **the parse does not walk the text the caller handed over**. Newlines are
+normalised, `#INCLUDE` is expanded, comment lines are dropped — so a working-line number is not a
+buffer-line number, and inside an included region it belongs to a different file entirely. Aligning
+the two texts afterwards would be guesswork, so instead `positions.odin`'s `Mapped_Builder` records
+each line's origin AS THE BYTES ARE WRITTEN: the passes stay byte-for-byte what they were (parity
+would notice otherwise) and gain an origin table alongside their output. `span_at_offset` turns any
+offset in the working text into a source span; `span_of` does the same for a string the classifier is
+holding, using the fact that blocks and rows are SUBSLICES of the working text. A string that was
+BUILT rather than sliced — a paste's output, a cloned paragraph — is detected by pointer range and
+reported with no position rather than a wrong one.
+
+The one limitation, taken deliberately: a source with LONE `` line endings is counted after
+normalisation, so its numbers shift. CRLF and LF are exact.
+
+### 5.6 Checks that report without changing anything
+
+`checks.odin` holds the diagnostics that exist for an editor rather than for the parse. They only
+append to `diagnostics`, so the html is identical whether they run or not and corpus parity cannot
+see them.
+
+* **An unknown directive** — `#HDIE` is not a directive, so the block falls through to the bid table
+  builder, produces no rows and is DROPPED from the output in silence. The check knows the
+  reference's whole list (`INCLUDE`, `CUT`/`ENDCUT`, `COPY`/`ENDCOPY`, `PASTE`, `HIDE`, `BIDTABLE`,
+  `VUL`, `SEAT`, plus `#+KEY:` metadata) and underlines the keyword. Zero of these in the corpus,
+  which is the result that makes it worth keeping.
+* **A cross-reference that resolves nowhere** — `[label](#Anchor)` against the anchors the headings
+  actually generate, both ends through `normalise_header_id`. OFF unless
+  `Parse_Options.check_cross_references` asks for it, because the corpus is chapters assembled by a
+  root document: a chapter opened alone links to headings that exist in a file it does not include.
+  Measured on the corpus: **13 genuinely broken anchors in the assembled `bidding-system.bml`**.
+
 ---
 
 ## 6. Bug-compatibility, on purpose

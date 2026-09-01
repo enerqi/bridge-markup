@@ -15,8 +15,17 @@ diagnostic and drops the directive.
 Include_Resolver :: #type proc(name: string, user: rawptr, allocator: mem.Allocator) -> (text: string, ok: bool)
 
 Parse_Options :: struct {
-	resolve_include: Include_Resolver,
-	include_user:    rawptr,
+	resolve_include:        Include_Resolver,
+	include_user:           rawptr,
+	/*
+	Check that every `[label](#Anchor)` lands on a heading this document defines.
+
+	Off by default, and deliberately: the corpus is chapters assembled by one root document, so a
+	chapter opened ALONE links to headings that are real but live in a sibling file. An editor
+	showing one file wants these as warnings; a build over the root document wants them as errors;
+	a caller that knows it is holding a fragment wants them not at all.
+	*/
+	check_cross_references: bool,
 }
 
 /*
@@ -30,8 +39,8 @@ Document :: struct {
 	blocks:      []Block,
 	// `#+TITLE:` and friends, first value per key.
 	meta:        map[string]string,
-	// Problems that did not stop the parse. Always safe to ignore.
-	diagnostics: []string,
+	// Problems that did not stop the parse. Always safe to ignore; `diagnostic_text` formats one.
+	diagnostics: []Diagnostic,
 	arena:       virtual.Arena,
 }
 
@@ -65,8 +74,17 @@ parse :: proc(source: string, options := Parse_Options{}) -> ^Document {
 	parse_state_init(&state, allocator)
 
 	text := normalise_newlines(source, allocator)
+	/*
+	The line map is built here and then rewritten by each pass that adds or drops lines, so a
+	diagnostic raised while classifying a block can still say which line of which FILE it is about.
+	`positions.odin` explains why it is recorded as the bytes are written rather than reconstructed
+	afterwards.
+	*/
+	state.origins = origins_of_own_lines(text, allocator)
 	text = expand_includes(&state, text, options)
-	text = strip_comment_lines(text, allocator)
+	text = strip_comment_lines(&state, text, allocator)
+	state.text = text
+	state.line_starts = line_starts_of(text, allocator)
 
 	blocks := make([dynamic]Block, allocator)
 	for chunk in split_blocks(text, allocator) {
@@ -77,6 +95,9 @@ parse :: proc(source: string, options := Parse_Options{}) -> ^Document {
 
 	doc.blocks = blocks[:]
 	doc.meta = state.meta
+	if options.check_cross_references {
+		check_cross_references(&state, doc.blocks)
+	}
 	doc.diagnostics = state.diagnostics[:]
 	return doc
 }
@@ -135,8 +156,16 @@ expand_includes :: proc(state: ^Parse_State, source: string, options: Parse_Opti
 	if !strings.contains(source, "INCLUDE") {
 		return source
 	}
-	out := strings.builder_make(0, len(source), state.allocator)
+	/*
+	A `Mapped_Builder` rather than a plain one: this is the pass that makes a working line number
+	stop meaning a source line number, so every piece is written with the origin it deserves - the
+	source's own lines for what passes through, the included file's lines for what it brings in, and
+	the DIRECTIVE's line for the two wrapper newlines, which belong to nobody else.
+	*/
+	mb := mapped_builder_make(len(source), state.allocator)
 	written := 0
+	written_line := 0
+	line_index := 0
 	for line_start := 0; line_start <= len(source); {
 		newline := strings.index_byte(source[line_start:], '\n')
 		line_end := newline < 0 ? len(source) : line_start + newline
@@ -144,22 +173,31 @@ expand_includes :: proc(state: ^Parse_State, source: string, options: Parse_Opti
 		line := source[line_start:line_end]
 
 		if name, ok := match_include_line(line); ok {
-			strings.write_string(&out, source[written:line_start])
+			mb_write_mapped(&mb, source[written:line_start], origins_slice(state, written_line, line_index))
+			here := source_line_of(state, line_index)
+			indent := leading_space_count(line)
+			at := Source_Span {
+				line   = here,
+				col    = indent + 1,
+				length = len(strings.trim_right_space(line)) - indent,
+			}
 			// The reference wraps the included text in newlines, so the file's first and last
 			// blocks cannot fuse with whatever surrounded the directive.
-			strings.write_byte(&out, '\n')
+			mb_write(&mb, "\n", "", here)
 			if options.resolve_include != nil {
 				if text, resolved := options.resolve_include(name, options.include_user, state.allocator); resolved {
-					strings.write_string(&out, normalise_newlines(text, state.allocator))
+					mb_write(&mb, normalise_newlines(text, state.allocator), name, 1)
 				} else {
-					diagnose(state, "#INCLUDE %v: could not be read", name)
+					diagnose_at(state, at, .Error, "#INCLUDE %v: could not be read", name)
 				}
 			} else {
-				diagnose(state, "#INCLUDE %v: includes are not resolved here", name)
+				diagnose_at(state, at, .Warning, "#INCLUDE %v: includes are not resolved here", name)
 			}
-			strings.write_byte(&out, '\n')
+			mb_write(&mb, "\n", "", here)
 			written = past
+			written_line = line_index + 1
 		}
+		line_index += 1
 		if newline < 0 {
 			break
 		}
@@ -168,8 +206,23 @@ expand_includes :: proc(state: ^Parse_State, source: string, options: Parse_Opti
 	if written == 0 {
 		return source
 	}
-	strings.write_string(&out, source[written:])
-	return strings.to_string(out)
+	mb_write_mapped(&mb, source[written:], origins_slice(state, written_line, len(state.origins)))
+	state.origins = mb.origins
+	return strings.to_string(mb.out)
+}
+
+// The origins of working lines `from ..< to`, clamped: a pass asking past the end is asking about a
+// line that never existed, and an empty slice makes that an unknown position rather than a crash.
+@(private = "file")
+origins_slice :: proc(state: ^Parse_State, from, to: int) -> []Line_Origin {
+	low := clamp(from, 0, len(state.origins))
+	high := clamp(to, low, len(state.origins))
+	return state.origins[low:high]
+}
+
+@(private = "file")
+source_line_of :: proc(state: ^Parse_State, index: int) -> int {
+	return index >= 0 && index < len(state.origins) ? state.origins[index].line : 0
 }
 
 @(private = "file")
@@ -202,24 +255,29 @@ match_include_line :: proc(line: string) -> (name: string, ok: bool) {
 // `//` at the very start of a line comments the line out. Mid-line `//` is left alone: it appears
 // inside urls, and stripping it there once truncated real links.
 @(private = "file")
-strip_comment_lines :: proc(text: string, allocator := context.allocator) -> string {
+strip_comment_lines :: proc(state: ^Parse_State, text: string, allocator := context.allocator) -> string {
 	if !strings.contains(text, "//") {
 		return text
 	}
-	out := strings.builder_make(0, len(text), allocator)
+	// Dropping a line shifts every line number after it, so this pass rebuilds the map too - it
+	// carries each kept line's existing origin through rather than counting from one.
+	mb := mapped_builder_make(len(text), allocator)
+	index := 0
 	for line_start := 0; line_start <= len(text); {
 		newline := strings.index_byte(text[line_start:], '\n')
 		if newline < 0 {
-			strings.write_string(&out, text[line_start:])
+			mb_write_mapped(&mb, text[line_start:], origins_slice(state, index, len(state.origins)))
 			break
 		}
 		past := line_start + newline + 1
 		if !strings.has_prefix(text[line_start:], "//") {
-			strings.write_string(&out, text[line_start:past])
+			mb_write_mapped(&mb, text[line_start:past], origins_slice(state, index, index + 1))
 		}
+		index += 1
 		line_start = past
 	}
-	return strings.to_string(out)
+	state.origins = mb.origins
+	return strings.to_string(mb.out)
 }
 
 /*

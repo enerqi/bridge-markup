@@ -101,6 +101,12 @@ of work, so there is nothing to gain by trying.
 classify_block :: proc(state: ^Parse_State, text: string) -> (block: Block, ok: bool) {
 	allocator := state.allocator
 
+	// Before the classification, and independent of it: a misspelled directive is silently dropped
+	// by every branch below, so it is reported here rather than by any one of them.
+	if strings.contains(text, "#") {
+		check_directive_lines(state, text)
+	}
+
 	// Headings, deepest first - `**` also starts with `*`.
 	heading_markers := [?]string{"****", "***", "**", "*"}
 	heading_kinds := [?]Content_Kind{.H4, .H3, .H2, .H1}

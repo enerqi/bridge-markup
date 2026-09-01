@@ -20,7 +20,12 @@ Parse_State :: struct {
 	meta:          map[string]string,
 	// Problems worth reporting but not worth refusing the document over. A live preview parses a
 	// buffer someone is still typing, so a malformed directive has to degrade rather than abort.
-	diagnostics:   [dynamic]string,
+	diagnostics:   [dynamic]Diagnostic,
+	// The text the passes produced, and the two tables that turn an offset into it back into a
+	// position in the source someone is looking at. See `positions.odin`.
+	text:          string,
+	origins:       [dynamic]Line_Origin,
+	line_starts:   [dynamic]int,
 	allocator:     mem.Allocator,
 }
 
@@ -31,7 +36,7 @@ parse_state_init :: proc(state: ^Parse_State, allocator := context.allocator) {
 		vulnerability = "00",
 		seat          = "0",
 		meta          = make(map[string]string, allocator),
-		diagnostics   = make([dynamic]string, allocator),
+		diagnostics   = make([dynamic]Diagnostic, allocator),
 		allocator     = allocator,
 	}
 }

@@ -129,7 +129,7 @@ test_paste_of_an_unknown_name_is_a_diagnostic_not_a_crash :: proc(t: ^testing.T)
 	root := create_bidtree(&state, "#PASTE nothing\n1C = strong\n")
 	testing.expect(t, root != nil)
 	testing.expect_value(t, len(state.diagnostics), 1)
-	testing.expect(t, strings.contains(state.diagnostics[0], "nothing"))
+	testing.expect(t, strings.contains(state.diagnostics[0].message, "nothing"))
 }
 
 @(test)

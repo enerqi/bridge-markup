@@ -30,8 +30,7 @@ main :: proc() {
 	// `render <file> <n>` re-renders n times and reports the per-run cost instead of the html. The
 	// interesting number for a live preview is the IN-PROCESS one, which a shell loop cannot see
 	// past process startup.
-	if len(os.args) > 2 {
-		runs, _ := strconv.parse_int(os.args[2])
+	if runs, is_count := strconv.parse_int(len(os.args) > 2 ? os.args[2] : ""); is_count {
 		start := time.now()
 		for _ in 0 ..< runs {
 			doc := lib.parse(string(source), {resolve_include = read_include})
@@ -45,11 +44,21 @@ main :: proc() {
 		return
 	}
 
-	doc := lib.parse(string(source), {resolve_include = read_include})
+	// `render <file> -links` also checks that every `[label](#Anchor)` lands on a heading this
+	// document defines. Off by default for the same reason the library's option is: a chapter of a
+	// corpus assembled by a root document links outside itself on purpose.
+	check_links := false
+	for arg in os.args[2:] {
+		if arg == "-links" {
+			check_links = true
+		}
+	}
+
+	doc := lib.parse(string(source), {resolve_include = read_include, check_cross_references = check_links})
 	defer lib.destroy(doc)
 
 	for diagnostic in doc.diagnostics {
-		fmt.eprintln(diagnostic)
+		fmt.eprintln(lib.diagnostic_text(diagnostic, context.temp_allocator))
 	}
 	fmt.print(lib.render_html(doc))
 }
