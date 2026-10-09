@@ -39,6 +39,8 @@ Speed followed: 1.9 ms for a chapter against 29 ms plus interpreter startup plus
 	directives.odin  #CUT / #COPY / #PASTE / #HIDE / #BIDTABLE
 	node.odin        Node, child creation, sequences
 	call.odin        bid_representation: one bid token to the auction it stands for
+	bids/            `markup:bids`, the call MODEL - a port of the bml tools' `bmlbids.py` (what a call is, how
+	                 calls order). A separate package: the parser does not use it; the notes repo's quiz does.
 	inline.odin      inline markup (suits, emphasis, links) to element nodes
 	xml.odin         an ElementTree emulation, existing purely to serialise like python does
 	html.odin        document assembly, in the reference's order
