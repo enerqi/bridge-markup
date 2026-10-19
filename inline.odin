@@ -38,6 +38,20 @@ fill :: proc(parent: ^Element, text: string, allocator := context.allocator) {
 	}
 }
 
+/*
+One line of BML text as the html the renderer would put in its place: suit runs and `!x` as glyph spans,
+long dashes, links, strong, em and code - `1C--1!s` becomes `1<span class="ccolor">...`. No block
+structure, so it is for a heading or a table cell's text, not a document.
+
+PUBLIC for a host that shows SOURCE text in its own html, the way the page would show it: the workbench's
+heading palette lists headings as they read on the page rather than as they were typed.
+*/
+render_inline :: proc(text: string, allocator := context.allocator) -> string {
+	root := element_make("span", context.temp_allocator)
+	fill(root, text, context.temp_allocator)
+	return serialise_content(root, allocator)
+}
+
 @(private = "file")
 Inline_Match :: struct {
 	start:  int,

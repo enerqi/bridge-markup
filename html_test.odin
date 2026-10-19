@@ -101,6 +101,18 @@ test_header_ids_lowercase_suit_pairs :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_inline_text_renders_as_the_page_would :: proc(t: ^testing.T) {
+	testing.expect_value(
+		t,
+		render_inline("1C--1!s", context.temp_allocator),
+		`1<span class="ccolor">&#9827;</span>&#8211;1<span class="scolor">&#9824;</span>`,
+	)
+	testing.expect_value(t, render_inline("2N & 1NT", context.temp_allocator), "2NT &amp; 1NT")
+	testing.expect_value(t, render_inline("What is our *first double*?", context.temp_allocator), "What is our <strong>first double</strong>?")
+	testing.expect_value(t, render_inline("", context.temp_allocator), "")
+}
+
+@(test)
 test_a_whole_small_document :: proc(t: ^testing.T) {
 	doc := parse("* Heading One\n\nSome prose here.\n\n- item a\n- item b\n\n1N = 15-17 balanced\n  2C = stayman\n")
 	defer destroy(doc)

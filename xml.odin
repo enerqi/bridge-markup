@@ -90,6 +90,17 @@ serialise :: proc(root: ^Element, allocator := context.allocator) -> string {
 	return strings.to_string(out)
 }
 
+// The CONTENT of an element - its text, then its children with their tails - without its own tags.
+@(private)
+serialise_content :: proc(root: ^Element, allocator := context.allocator) -> string {
+	out := strings.builder_make(0, 2 * len(root.text) + 64, allocator)
+	write_escaped(&out, root.text, in_attribute = false)
+	for child in root.children {
+		write_element(&out, child)
+	}
+	return strings.to_string(out)
+}
+
 /*
 One element: its tag, its attributes in INSERTION ORDER, then text, children and closing tag.
 
