@@ -26,6 +26,13 @@ Parse_Options :: struct {
 	a caller that knows it is holding a fragment wants them not at all.
 	*/
 	check_cross_references: bool,
+	/*
+	Anchors to count as defined although no heading in THIS document makes them: the headings of the page
+	a chapter is read in. A chapter's links to its siblings are real on the assembled page (the published
+	one), and an editor holding the chapter alone knows that page's headings (`heading_anchors` of each root
+	that includes it). Ids as `normalise_header_id` makes them.
+	*/
+	known_anchors:          []string,
 }
 
 /*
@@ -96,7 +103,7 @@ parse :: proc(source: string, options := Parse_Options{}) -> ^Document {
 	doc.blocks = blocks[:]
 	doc.meta = state.meta
 	if options.check_cross_references {
-		check_cross_references(&state, doc.blocks)
+		check_cross_references(&state, doc.blocks, options.known_anchors)
 	}
 	doc.diagnostics = state.diagnostics[:]
 	return doc

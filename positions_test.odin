@@ -185,6 +185,25 @@ test_an_anchor_defined_by_an_included_file_resolves :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_an_anchor_the_page_defines_elsewhere_resolves :: proc(t: ^testing.T) {
+	// A chapter opened alone links to a sibling's heading: real on the assembled page, so a caller that
+	// knows that page's headings passes them and the link is quiet. One it does not know still warns.
+	root := parse_temp("* Sibling Heading\n\n** Other\n")
+	known := heading_anchors(root, context.temp_allocator)
+	destroy(root)
+	testing.expect_value(t, len(known), 2)
+
+	doc := parse_temp(
+		"see [it](#Sibling Heading) and [gone](#Nowhere)\n",
+		{check_cross_references = true, known_anchors = known},
+	)
+	defer destroy(doc)
+	if testing.expect_value(t, len(doc.diagnostics), 1) {
+		testing.expect(t, strings.contains(doc.diagnostics[0].message, "#Nowhere"))
+	}
+}
+
+@(test)
 test_diagnostic_text_prints_what_is_known :: proc(t: ^testing.T) {
 	full := diagnostic_text(
 		Diagnostic{message = "bad", severity = .Warning, at = {file = "chapter.bml", line = 12, col = 4}},

@@ -98,8 +98,11 @@ assembled by a root document: a chapter opened on its own links to headings that
 does not include. See the option's own comment.
 */
 @(private)
-check_cross_references :: proc(state: ^Parse_State, blocks: []Block) {
+check_cross_references :: proc(state: ^Parse_State, blocks: []Block, known: []string = nil) {
 	anchors := make(map[string]bool, 64, state.allocator)
+	for id in known {
+		anchors[id] = true
+	}
 	for block in blocks {
 		switch block.kind {
 		case .H1, .H2, .H3, .H4:
@@ -133,4 +136,20 @@ check_cross_references :: proc(state: ^Parse_State, blocks: []Block) {
 		at := span_at_offset(state, target_start, len(target))
 		diagnose_at(state, at, .Warning, "no heading here defines the anchor %v", target)
 	}
+}
+
+/*
+Every anchor a parsed document's headings define, as `normalise_header_id` makes them, in `allocator`.
+What `Parse_Options.known_anchors` takes: an editor gathers the headings of the assembled page a chapter is
+read in, so the chapter's links to its siblings resolve.
+*/
+heading_anchors :: proc(doc: ^Document, allocator := context.allocator) -> []string {
+	out := make([dynamic]string, 0, 64, allocator)
+	for block in doc.blocks {
+		#partial switch block.kind {
+		case .H1, .H2, .H3, .H4:
+			append(&out, normalise_header_id(block.text, allocator))
+		}
+	}
+	return out[:]
 }
