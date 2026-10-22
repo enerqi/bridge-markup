@@ -51,6 +51,7 @@ format: ensure-odinfmt
 [group('qa')]
 lint *args:
 	odin check . -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
+	odin check cmd/bml2html.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
 
 # What `just run` is to a program: the fast "does it still compile" loop. Deliberately without the vet and
 # style flags `lint` carries - those are worth a separate, slower pass rather than noise between an edit
@@ -144,6 +145,74 @@ examples:
 [group('docs')]
 doc *args:
 	odin doc . {{args}}
+
+
+# ======================================================== bml2html ========
+#
+# The library's command-line tool, `cmd/bml2html.odin`: `.bml` -> `.html` for a whole corpus in ONE process,
+# one thread per file. The bridge notes' `just bml` builds it through `build-bml2html` and runs the exe from
+# the notes' root, so `#INCLUDE` and the output paths resolve there. Byte-identical to the python reference
+# (CRLF included - see the file's header), which `parity` holds.
+
+bml2html_exe := target_path("release", "bml2html.exe")
+
+# FILES defaults to every *.bml in the directory just was invoked from. `--stdout` renders one file to
+# stdout untranslated (the byte stream parity compares); `--out-dir` puts the html elsewhere.
+# e.g. `just bml2html nt-bidding.bml` ; `just bml2html --stdout nt-bidding.bml`
+# ---
+# convert .bml notes to .html (one process, one thread per file)
+[group('bml2html')]
+[no-cd]
+bml2html *args: build-bml2html
+	"{{ join(justfile_directory(), bml2html_exe) }}" {{args}}
+
+# It names the exe on STDERR, and only when it actually builds one: a `--stdout` render through `bml2html`
+# above stays a clean byte stream, and the notes' `watch` loop stays silent while nothing needs compiling.
+#
+# STALENESS, not an unconditional build: the notes' `just watch` runs `just publish` on every .bml/.css save
+# and the odin build is ~3s of it (LLVM code gen; Odin has no build cache) against 0.03s for the whole 19-file
+# render. Odin is not a build graph, so the guard is here: rebuild when the exe is missing, when any source it
+# was built from is newer than it (cmd/bml2html.odin plus every .odin of the library - a package's test files
+# are type-checked with it, so they count), or when the BUILD COMMAND ITSELF differs from the one recorded
+# beside the exe (a changed linker or optimisation flag has to force a rebuild the way a changed source does).
+# ---
+# build target/release/bml2html.exe if its sources changed
+[group('bml2html')]
+[script]
+build-bml2html: mktarget_dirs
+	import os, subprocess, sys
+	from glob import glob
+
+	exe = os.path.normpath(r"""{{bml2html_exe}}""")
+	command = [
+		"odin", "build", "cmd/bml2html.odin", "-file",
+		"-o:speed", "-linker:{{linker}}", "-out:" + exe,
+	]
+	stamp = os.path.splitext(exe)[0] + ".stamp"
+	record = "\n".join(command)
+
+	def stale():
+		if not os.path.isfile(exe):
+			return "not built yet"
+		try:
+			if open(stamp, encoding="utf-8").read() != record:
+				return "build command changed"
+		except OSError:
+			return "no build stamp"
+		built = os.path.getmtime(exe)
+		sources = ["cmd/bml2html.odin"] + glob("*.odin")
+		newer = [s for s in sources if os.path.getmtime(s) > built]
+		return os.path.basename(newer[0]) + " is newer" if newer else ""
+
+	why = stale()
+	if why:
+		print("building " + exe + " (" + why + ")", file=sys.stderr)
+		if subprocess.run(command).returncode != 0:
+			sys.exit("bml2html build failed")
+		# AFTER the build, so an interrupted or failed one leaves the stamp saying "rebuild me".
+		with open(stamp, "w", encoding="utf-8") as f:
+			f.write(record)
+		print(exe, file=sys.stderr)
 
 
 # =========================================================== test =========

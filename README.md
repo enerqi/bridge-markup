@@ -34,6 +34,14 @@ Speed came along with it. Rendering one chapter, in-process: **1.9 ms** against 
 29 ms plus interpreter startup plus a process spawn. The whole 1.2 MB system with all its includes:
 **17.6 ms** against 262 ms.
 
+## Command line
+
+`cmd/bml2html.odin` is the library as a program: `.bml` -> `.html` for a whole corpus in one process,
+one thread per file, byte-identical to the reference's `bml2html.py` (CRLF line endings included).
+`just build-bml2html` builds `target/release/bml2html.exe`, rebuilding only when a source or the build
+command changed; `just bml2html [FILES]` runs it in the directory just was invoked from. The bridge
+notes' `just bml` builds and runs it this way.
+
 ## Fidelity
 
 The goal is BYTE-IDENTICAL html, and `just parity` is what holds it to that: it renders every file
