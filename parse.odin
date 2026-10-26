@@ -33,6 +33,13 @@ Parse_Options :: struct {
 	that includes it). Ids as `normalise_header_id` makes them.
 	*/
 	known_anchors:          []string,
+	/*
+	Report bid-table rows whose indentation nests them in a way that is easy to misread: a tab in the
+	indent (it counts as one space), a step back to a column no row above uses, a child one column in.
+	Off by default, like the cross-references: an editor asks for it, a build has no one to tell.
+	`check_row_indentation` has the rules.
+	*/
+	check_indentation:      bool,
 }
 
 /*
@@ -79,6 +86,7 @@ parse :: proc(source: string, options := Parse_Options{}) -> ^Document {
 
 	state: Parse_State
 	parse_state_init(&state, allocator)
+	state.check_indentation = options.check_indentation
 
 	text := normalise_newlines(source, allocator)
 	/*
@@ -131,7 +139,7 @@ indentation that nests a bid table - is written against `\n`. The reference neve
 this because python's text mode does the same translation on read, invisibly; skip it here and a
 CRLF document parses as one enormous block that classifies as nothing at all.
 */
-@(private = "file")
+@(private) // package-wide: the tidy pass (tidy.odin) classifies as the parse does
 normalise_newlines :: proc(text: string, allocator := context.allocator) -> string {
 	if !strings.contains(text, "\r") {
 		return text

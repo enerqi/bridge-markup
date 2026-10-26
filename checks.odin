@@ -153,3 +153,67 @@ heading_anchors :: proc(doc: ^Document, allocator := context.allocator) -> []str
 	}
 	return out[:]
 }
+
+/*
+Report a bid-table row whose indentation nests it in a way that is easy to misread. Called by the table
+builder for every bid row when `Parse_Options.check_indentation` is on, with `previous` the row before it
+and `above` the row it was measured against after stepping back up (the same node when it did not step).
+
+The tree is built by comparing columns, never by counting steps (`create_bidtree`), so 2, 4 or 3 spaces a
+level all parse. What reads wrongly is different:
+
+  - A TAB in the indent counts as one space, so a row that LOOKS a level deeper can be a sibling.
+  - A step BACK to a column no row above uses (0, 4, then 2) nests the row under the nearest shallower
+    bid, beside rows at another column - a sibling drawn where no sibling is.
+  - A child ONE column in (a bid at 4, the next at 5) is a child, where one stray space was usually meant
+    as a sibling.
+*/
+@(private)
+check_row_indentation :: proc(state: ^Parse_State, row: string, indentation: int, previous, above: ^Node) {
+	if strings.index_byte(row[:indentation], '\t') >= 0 {
+		diagnose_at(
+			state,
+			span_of(state, row, length = indentation),
+			.Warning,
+			"this row is indented with a tab, which counts as one space: it may not nest as it looks",
+		)
+		return // and that is the whole story: a tab is one column, so it would be "one column in" too
+	}
+	stepped_back := previous != above
+	if stepped_back && indentation > above.indentation {
+		if above.desc == ROOT_SENTINEL {
+			// The usual cause is not the column at all but a BLANK LINE further up: it ends the table, so the rows
+			// after it are a new one whose first row is deeper than this (reported, 2diamond-opening.bml:304,
+			// where `2N+` read as being under `2D` and was not). So the message names that first row and the cause.
+			first, first_bid := 0, ""
+			if len(above.children) > 0 {
+				first, first_bid = above.children[0].indentation, above.children[0].bid
+			}
+			diagnose_at(
+				state,
+				span_of(state, row, length = indentation),
+				.Warning,
+				"this row is left of its table's first row (%v, column %v), so it is a top-level row - if it belongs under a bid further up, a blank line between them has ended the table",
+				first_bid,
+				first,
+			)
+		} else {
+			diagnose_at(
+				state,
+				span_of(state, row, length = indentation),
+				.Warning,
+				"this row steps back to column %v, which no row above it uses: it nests under %v",
+				indentation,
+				above.bid,
+			)
+		}
+	} else if !stepped_back && above.desc != ROOT_SENTINEL && indentation == above.indentation + 1 {
+		diagnose_at(
+			state,
+			span_of(state, row, length = indentation),
+			.Warning,
+			"this row is one column deeper than %v, so it is that bid's child: one space is usually a slip",
+			above.bid,
+		)
+	}
+}

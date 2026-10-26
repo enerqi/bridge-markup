@@ -27,6 +27,8 @@ Parse_State :: struct {
 	origins:       [dynamic]Line_Origin,
 	line_starts:   [dynamic]int,
 	allocator:     mem.Allocator,
+	// `Parse_Options.check_indentation`, for the bid table builder.
+	check_indentation: bool,
 }
 
 @(private)

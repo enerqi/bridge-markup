@@ -24,6 +24,9 @@ BRIDGE = os.environ.get("BRIDGE_DIR", os.path.join(HOME, "docs", "bridge", "brid
 BML_TOOLS = os.environ.get("BML_TOOLS_DIRECTORY", os.path.join(HOME, "dev", "bml"))
 RENDER = os.path.join(HERE, "target", "render.exe" if os.name == "nt" else "render")
 
+# Absolute, so `os.path.join(BRIDGE, name)` leaves them as they are.
+FIXTURES = [os.path.join(BML_TOOLS, "tests", "constructs.bml")]
+
 CONTEXT = 60
 
 
@@ -68,6 +71,10 @@ def main(argv):
         return 1
 
     names = argv[1:] or sorted(f for f in os.listdir(BRIDGE) if f.endswith(".bml"))
+    # And the reference repo's fixture of what the corpus never uses - deal diagrams, pipe tables,
+    # description lists, auctions - so those renderers are held to the reference too (2026-10-26).
+    if not argv[1:]:
+        names += [p for p in FIXTURES if os.path.exists(p)]
     identical, different, failed = [], [], []
 
     for name in names:

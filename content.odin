@@ -190,7 +190,7 @@ The second adds blocks whose first bid uses the `!x` suit shorthand or does not 
 at all (`Pass--...`, `(2!d)`, `2!c = ...`); requiring a ` = ` somewhere keeps prose that merely opens
 bid-shaped from being swallowed.
 */
-@(private = "file")
+@(private) // package-wide: the tidy pass (tidy.odin) classifies as the parse does
 looks_like_bidtable :: proc(text: string) -> bool {
 	body := text[leading_space_count(text):]
 	if opens_with_lettered_bid(body) {
@@ -248,7 +248,7 @@ Four call-shaped tokens in a row make an auction table.
 Each token is an optional bracket, an optional level, one strain-or-call letter and an optional
 closing bracket: `1C  P  1H  P`.
 */
-@(private = "file")
+@(private) // package-wide: the tidy pass (tidy.odin) classifies as the parse does
 is_bidding_block :: proc(text: string) -> bool {
 	cursor := leading_space_count(text)
 	for _ in 0 ..< 4 {
@@ -308,7 +308,7 @@ match_meta_line :: proc(text: string) -> (key, value: string, ok: bool) {
 	return key, value, true
 }
 
-@(private = "file")
+@(private) // package-wide: the tidy pass (tidy.odin) classifies as the parse does
 starts_with_after_space :: proc(text, prefix: string) -> bool {
 	return strings.has_prefix(text[leading_space_count(text):], prefix)
 }

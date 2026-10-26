@@ -53,8 +53,12 @@ create_bidtree :: proc(state: ^Parse_State, text: string) -> ^Node {
 
 		bid, desc, desc_indentation := split_bid_row(row, stripped, allocator)
 
+		deeper_before := last
 		for indentation < last.indentation {
 			last = last.parent
+		}
+		if state.check_indentation {
+			check_row_indentation(state, row, indentation, deeper_before, last)
 		}
 		if indentation > last.indentation {
 			last = add_child(last, bid, desc, indentation, desc_indentation, allocator)
@@ -119,7 +123,7 @@ call, a pseudo-bid word (`any`, `other`), a compound sequence (`Pass--(1H)--X`),
 wrapped in a markdown link. Pseudo-bids are caught by the ` = ` separator; genuine continuation
 lines are prose with neither that nor a bid-like first token.
 */
-@(private = "file")
+@(private) // package-wide: the tidy pass (tidy.odin) classifies as the parse does
 is_bid_row :: proc(stripped: string) -> bool {
 	first_token := stripped
 	if label, ok := link_label(stripped); ok {
