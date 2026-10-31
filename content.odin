@@ -23,6 +23,12 @@ Content_Kind :: enum {
 	Table,
 	Description,
 	Bidding,
+	// `#+CAPTION: text`: a title over the block under it, not a heading (no anchor). `text` holds it.
+	Caption,
+	// `#BOX` and `#ENDBOX`, each a block of its own (`box_split`): what is between them is drawn as a box of
+	// two columns, the diagram / auction / table / caption it starts with on the left, the text beside it.
+	Box,
+	End_Box,
 }
 
 /*
@@ -34,8 +40,12 @@ Blocks are arena-allocated with the document and die with it.
 */
 Block :: struct {
 	kind:    Content_Kind,
-	// `Paragraph` and the headings.
+	// `Paragraph`, the headings and `Caption`; a `Box`'s title.
 	text:    string,
+	// A `Box`'s callout type: "note", "info", "tip", "warning", or "" (a constant, not allocated).
+	variant: string,
+	// The headings', `Caption`'s and `Box`'s class hook (`class_hook`): its classes, space separated; "" for none.
+	classes: string,
 	// `List`, `Enum` and `Description`.
 	items:   []string,
 	// `Table` and `Bidding`, row by row.
@@ -103,8 +113,21 @@ classify_block :: proc(state: ^Parse_State, text: string) -> (block: Block, ok: 
 
 	// Before the classification, and independent of it: a misspelled directive is silently dropped
 	// by every branch below, so it is reported here rather than by any one of them.
-	if strings.contains(text, "#") {
+	if !state.in_rest && strings.contains(text, "#") {
 		check_directive_lines(state, text)
+	}
+
+	if is_box, end, variant, title := box_marker(text); is_box {
+		if end {
+			return Block{kind = .End_Box}, true
+		}
+		return Block {
+				kind = .Box,
+				variant = variant,
+				text = strings.clone(title, allocator),
+				classes = box_classes(text, allocator),
+			},
+			true
 	}
 
 	// Headings, deepest first - `**` also starts with `*`.
@@ -112,9 +135,17 @@ classify_block :: proc(state: ^Parse_State, text: string) -> (block: Block, ok: 
 	heading_kinds := [?]Content_Kind{.H4, .H3, .H2, .H1}
 	for level, i in heading_markers {
 		if strings.has_prefix(text, level) {
-			heading := strings.trim_left_space(text[len(level):])
-			return Block{kind = heading_kinds[i], text = strings.clone(heading, allocator)}, true
+			heading, classes := class_hook(strings.trim_left_space(text[len(level):]), allocator)
+			return Block{kind = heading_kinds[i], text = strings.clone(heading, allocator), classes = classes}, true
 		}
+	}
+
+	// A caption line: the caption here, and the rest of the block goes round the parse loop again.
+	if caption, is_caption := caption_line(text); is_caption {
+		newline := strings.index_byte(text, '\n')
+		state.diagram_rest = newline < 0 ? "" : text[newline + 1:]
+		caption_text, classes := class_hook(caption, allocator)
+		return Block{kind = .Caption, text = strings.clone(caption_text, allocator), classes = classes}, true
 	}
 
 	if starts_with_after_space(text, "-") {
@@ -152,6 +183,22 @@ classify_block :: proc(state: ^Parse_State, text: string) -> (block: Block, ok: 
 		return Block{kind = .Table, rows = split_pipe_rows(text, allocator)}, true
 	}
 
+	// A diagram with text before or after it in the same block (`split_diagram`): text before is classified
+	// here and the rest goes round the parse loop again; then the diagram, and the text after goes round.
+	if before, head, after, split := split_diagram(text); split {
+		if len(strings.trim_space(before)) > 0 {
+			in_rest := state.in_rest
+			state.in_rest = true // its directive lines were checked with the whole block
+			block, ok = classify_block(state, before)
+			state.in_rest = in_rest
+			state.diagram_rest = text[len(before) + 1:]
+			return block, ok
+		}
+		if diagram, is_diagram := parse_diagram(head, allocator); is_diagram {
+			state.diagram_rest = after
+			return Block{kind = .Diagram, diagram = diagram}, true
+		}
+	}
 	if diagram, is_diagram := parse_diagram(text, allocator); is_diagram {
 		return Block{kind = .Diagram, diagram = diagram}, true
 	}
@@ -180,6 +227,148 @@ classify_block :: proc(state: ^Parse_State, text: string) -> (block: Block, ok: 
 	}
 	// Prose keeps its line breaks but loses the indentation that came with them.
 	return Block{kind = .Paragraph, text = unindent_wrapped_prose(text, allocator)}, true
+}
+
+/*
+Is `line` a `#BOX` or `#ENDBOX` marker (any case, spaces around it and after the `#`)? A `#BOX` line can go on:
+`#BOX note|info|tip|warning Title` is a callout of that type (`variant`, lower case) with a title, `#BOX Title` a plain
+frame with one. The python reference's `_BOX_RE` and `_box_payload`.
+*/
+@(private)
+box_marker :: proc(line: string) -> (is_box: bool, end: bool, variant: string, title: string) {
+	rest := strings.trim(line, " \t")
+	if !strings.has_prefix(rest, "#") {
+		return
+	}
+	rest = strings.trim_left(rest[1:], " \t")
+	if equal_fold_ascii(rest, "ENDBOX") {
+		return true, true, "", ""
+	}
+	if len(rest) < 3 || !equal_fold_ascii(rest[:3], "BOX") || (len(rest) > 3 && rest[3] != ' ' && rest[3] != '\t') {
+		return
+	}
+	words, _ := class_hook(strings.trim(rest[3:], " \t"), context.temp_allocator)
+	first := 0
+	for first < len(words) && words[first] != ' ' && words[first] != '\t' {
+		first += 1
+	}
+	for kind in ([]string{"note", "info", "tip", "warning"}) {
+		if first > 0 && equal_fold_ascii(words[:first], kind) {
+			return true, false, kind, strings.trim_left(words[first:], " \t")
+		}
+	}
+	return true, false, "", words
+}
+
+// The class hook of a `#BOX` line (`box_marker` takes it off the title).
+@(private)
+box_classes :: proc(line: string, allocator := context.allocator) -> string {
+	_, classes := class_hook(strings.trim(line, " \t"), allocator)
+	return classes
+}
+
+/*
+A CLASS HOOK: `{.name}` (or `{.one .two}`) at the end of a heading, a `#BOX` line or a `#+CAPTION:` line, after a
+space or tab or alone, gives what that line makes those CSS classes, for a stylesheet of the author's own to aim
+at. Returns the text without the hook and the classes, space separated ("" and the text unchanged for none).
+Names are ASCII: a letter or `_`, then letters, digits, `_` or `-`. The python reference's `_class_hook`.
+*/
+@(private)
+class_hook :: proc(text: string, allocator := context.allocator) -> (rest: string, classes: string) {
+	end := len(text)
+	// Spaces after it, and newlines: the last block of a file keeps its own.
+	for end > 0 && (text[end - 1] == ' ' || text[end - 1] == '\t' || text[end - 1] == '\n' || text[end - 1] == '\r') {
+		end -= 1
+	}
+	if end == 0 || text[end - 1] != '}' {
+		return text, ""
+	}
+	open := strings.last_index_byte(text[:end], '{')
+	if open < 0 {
+		return text, ""
+	}
+	names := make([dynamic]string, context.temp_allocator)
+	at := open + 1
+	for at < end - 1 {
+		for at < end - 1 && (text[at] == ' ' || text[at] == '\t') {
+			at += 1
+		}
+		if at == end - 1 {
+			break
+		}
+		if text[at] != '.' || at + 1 >= end - 1 || !is_class_start(text[at + 1]) {
+			return text, ""
+		}
+		start := at + 1
+		at = start + 1
+		for at < end - 1 && is_class_char(text[at]) {
+			at += 1
+		}
+		append(&names, text[start:at])
+	}
+	if len(names) == 0 {
+		return text, ""
+	}
+	before := open
+	for before > 0 && (text[before - 1] == ' ' || text[before - 1] == '\t') {
+		before -= 1
+	}
+	if before == open && open != 0 {
+		return text, "" // glued to the word before it: `Title{.x}` is text
+	}
+	return text[:before], strings.join(names[:], " ", allocator)
+}
+
+@(private = "file")
+is_class_start :: #force_inline proc "contextless" (ch: u8) -> bool {
+	return ch == '_' || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+}
+
+@(private = "file")
+is_class_char :: #force_inline proc "contextless" (ch: u8) -> bool {
+	return is_class_start(ch) || ch == '-' || (ch >= '0' && ch <= '9')
+}
+
+// A block cut at its `#BOX` / `#ENDBOX` lines, each marker a piece of its own; just the block when it has
+// none. The pieces are slices of `block`, so positions still map back to the source.
+@(private)
+box_split :: proc(block: string, allocator := context.temp_allocator) -> []string {
+	pieces := make([dynamic]string, 0, 1, allocator)
+	run_start, at := 0, 0
+	for at <= len(block) {
+		end := strings.index_byte(block[at:], '\n')
+		line_end := end < 0 ? len(block) : at + end
+		if is_box, _, _, _ := box_marker(block[at:line_end]); is_box {
+			if at > run_start {
+				append(&pieces, block[run_start:at - 1]) // without the newline before the marker
+			}
+			append(&pieces, block[at:line_end])
+			run_start = line_end + 1
+		}
+		at = line_end + 1
+	}
+	if run_start < len(block) {
+		append(&pieces, block[run_start:])
+	}
+	return pieces[:]
+}
+
+// The caption of a block whose first line is `#+CAPTION: text` (any case, spaces or tabs before it).
+@(private)
+caption_line :: proc(text: string) -> (caption: string, ok: bool) {
+	line := text
+	if newline := strings.index_byte(text, '\n'); newline >= 0 {
+		line = text[:newline]
+	}
+	at := 0
+	for at < len(line) && (line[at] == ' ' || line[at] == '\t') {
+		at += 1
+	}
+	MARKER :: "#+CAPTION:"
+	if len(line) - at < len(MARKER) || !equal_fold_ascii(line[at:at + len(MARKER)], MARKER) {
+		return "", false
+	}
+	return strings.trim_space(line[at + len(MARKER):]), true
 }
 
 /*
@@ -243,45 +432,116 @@ opens_bidtable_row :: proc(body: string) -> bool {
 }
 
 /*
-Four call-shaped tokens in a row make an auction table.
-
-Each token is an optional bracket, an optional level, one strain-or-call letter and an optional
-closing bracket: `1C  P  1H  P`.
+An auction table: every token of its call rows a call (`is_call_token`), at least two of them - with a
+`W N E S` row first if wanted, and notes after (`auction_parts`). A row can hold any number of calls, so an
+auction that stops short, or one dealt by a seat other than the first column's (`-` for the seats before),
+is still one. A bid table is not one: its `=` is not a call. Case-blind: `1d p 1s` is typed as often as
+`1D P 1S`, and is written in capitals (`write_auction`). The python reference's `_is_auction` (bml.py).
 */
 @(private) // package-wide: the tidy pass (tidy.odin) classifies as the parse does
 is_bidding_block :: proc(text: string) -> bool {
-	cursor := leading_space_count(text)
-	for _ in 0 ..< 4 {
-		start := cursor
-		if cursor < len(text) && text[cursor] == '(' {
-			cursor += 1
+	rows := make([dynamic][]string, context.temp_allocator)
+	rest := text
+	for line in strings.split_iterator(&rest, "\n") {
+		if tokens := strings.fields(line, context.temp_allocator); len(tokens) > 0 {
+			append(&rows, tokens)
 		}
-		if cursor < len(text) && '1' <= text[cursor] && text[cursor] <= '7' {
-			cursor += 1
+	}
+	_, calls, _ := auction_parts(rows[:])
+	count := 0
+	for row in calls {
+		for token in row {
+			if !is_call_token(strings.to_upper(token, context.temp_allocator)) {
+				return false
+			}
+			count += 1
 		}
-		if cursor >= len(text) || !strings.contains(BIDDING_LETTERS, text[cursor:cursor + 1]) {
+	}
+	return count >= 2
+}
+
+/*
+An auction's rows - each a list of tokens, none empty - as the `W N E S` row if the first is one (else nil),
+the rows of calls, and the note rows. The notes start at the first row after a row of calls whose first
+token starts `*` or `^1`; every row after it is a note, or a note's continuation. The python reference's
+`auction_parts` (bml.py).
+*/
+@(private)
+auction_parts :: proc(rows: [][]string) -> (header: []string, calls: [][]string, notes: [][]string) {
+	rows := rows
+	if len(rows) > 0 && is_seat_row(rows[0]) {
+		header, rows = rows[0], rows[1:]
+	}
+	for row, i in rows {
+		first := row[0]
+		if i > 0 && (first[0] == '*' || (len(first) > 1 && first[0] == '^' && is_digit_byte(first[1]))) {
+			return header, rows[:i], rows[i:]
+		}
+	}
+	return header, rows, nil
+}
+
+// A row of seat letters, `W N E S` (or `w n e s`): an auction's header.
+@(private)
+is_seat_row :: proc(tokens: []string) -> bool {
+	for token in tokens {
+		switch token {
+		case "N", "E", "S", "W", "n", "e", "s", "w":
+		case:
 			return false
-		}
-		cursor += 1
-		if cursor < len(text) && text[cursor] == ')' {
-			cursor += 1
-		}
-		if cursor == start {
-			return false
-		}
-		spaced := cursor
-		for cursor < len(text) && is_space_byte(text[cursor]) {
-			cursor += 1
-		}
-		if cursor == spaced && cursor < len(text) {
-			return false // tokens must be separated by whitespace
 		}
 	}
 	return true
 }
 
+/*
+A call's MARK, after it: `!` alerted, `*` / `**` / `^1` for the note under the auction that explains it.
+`core` is the call without it.
+*/
+@(private)
+call_mark :: proc(token: string) -> (core, mark: string) {
+	if strings.has_suffix(token, "!") {
+		return token[:len(token) - 1], "!"
+	}
+	i := len(token)
+	for i > 0 && token[i - 1] == '*' {
+		i -= 1
+	}
+	if i < len(token) {
+		return token[:i], token[i:]
+	}
+	for i > 0 && is_digit_byte(token[i - 1]) {
+		i -= 1
+	}
+	if i < len(token) && i > 0 && token[i - 1] == '^' {
+		return token[:i - 1], token[i - 1:]
+	}
+	return token, ""
+}
+
+/*
+One call of an auction (in capitals): a level bid (`1H`, `3NT`, `2N`), P, X, XX, D, R, AP, `?` for the call
+asked about, or `-` for a seat before the dealer; any of them in brackets for the opponents', and any with
+a mark after (`call_mark`).
+*/
 @(private = "file")
-BIDDING_LETTERS :: "NTPDRCHS"
+is_call_token :: proc(token: string) -> bool {
+	core, _ := call_mark(token)
+	call := strings.trim_prefix(core, "(")
+	call = strings.trim_suffix(call, ")")
+	switch call {
+	case "P", "X", "XX", "D", "R", "AP", "?", "-":
+		return true
+	}
+	if len(call) < 2 || call[0] < '1' || call[0] > '7' {
+		return false
+	}
+	switch call[1:] {
+	case "C", "D", "H", "S", "N", "NT":
+		return true
+	}
+	return false
+}
 
 // `#+KEYWORD: value`
 @(private = "file")

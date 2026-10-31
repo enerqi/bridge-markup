@@ -102,9 +102,19 @@ parse :: proc(source: string, options := Parse_Options{}) -> ^Document {
 	state.line_starts = line_starts_of(text, allocator)
 
 	blocks := make([dynamic]Block, allocator)
-	for chunk in split_blocks(text, allocator) {
-		if block, ok := classify_block(&state, chunk); ok {
-			append(&blocks, block)
+	for block in split_blocks(text, allocator) do for chunk in box_split(block) {
+		// A block can be a diagram AND text around it (`split_diagram`): the rest goes round again.
+		chunk := chunk
+		state.in_rest = false
+		for {
+			state.diagram_rest = ""
+			if block, ok := classify_block(&state, chunk); ok {
+				append(&blocks, block)
+			}
+			if state.diagram_rest == "" {
+				break
+			}
+			chunk, state.in_rest = state.diagram_rest, true
 		}
 	}
 

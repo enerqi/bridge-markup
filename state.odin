@@ -29,6 +29,11 @@ Parse_State :: struct {
 	allocator:     mem.Allocator,
 	// `Parse_Options.check_indentation`, for the bid table builder.
 	check_indentation: bool,
+	// What is left of a block with a diagram in it after the part just classified, for the parse loop to
+	// classify next (`split_diagram`).
+	diagram_rest:  string,
+	// Classifying such a rest: its directive lines were checked with the whole block.
+	in_rest:       bool,
 }
 
 @(private)

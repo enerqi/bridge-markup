@@ -26,6 +26,8 @@ KNOWN_DIRECTIVES :: [?]string {
 	"ENDCUT",
 	"COPY",
 	"ENDCOPY",
+	"BOX",
+	"ENDBOX",
 	"PASTE",
 	"HIDE",
 	"BIDTABLE",
@@ -107,7 +109,7 @@ check_cross_references :: proc(state: ^Parse_State, blocks: []Block, known: []st
 		switch block.kind {
 		case .H1, .H2, .H3, .H4:
 			anchors[normalise_header_id(block.text, state.allocator)] = true
-		case .Bidtable, .Paragraph, .List, .Enum, .Diagram, .Table, .Description, .Bidding:
+		case .Bidtable, .Paragraph, .List, .Enum, .Diagram, .Table, .Description, .Bidding, .Caption, .Box, .End_Box:
 		}
 	}
 

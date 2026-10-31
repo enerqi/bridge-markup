@@ -87,15 +87,17 @@ Nothing imports anything outside `core:`. That is deliberate — see §7.
 `classify_block` tries its tests in a FIXED ORDER and the first match wins. The order is not
 cosmetic and cannot be sorted alphabetically or turned into a switch on the first byte:
 
+0. a `#BOX` / `#ENDBOX` line (any case): `box_split` cuts every block at those lines first, so each is a block of its own (`Box` / `End_Box`); `render_html` draws the blocks between as a two-column box, the diagram / auction / table / caption it starts with on the left and the rest on the right; `#BOX note|info|tip|warning Title` (`Block.variant`, `Block.text`) or `#BOX Title` frames it as a callout. A trailing class hook `{.name}` on a heading, `#BOX` or `#+CAPTION:` line comes off the text into `Block.classes` (`class_hook`), added to the element's class
 1. headings, deepest marker first (`****` before `*`, since `**` also starts with `*`)
+   - then a first line `#+CAPTION: text` (any case): a `Caption` block, and the rest of the block goes round the parse loop again (`diagram_rest`)
 2. `-` lists — and a ` :: ` anywhere in the block makes it a description list instead
 3. `#VUL`, `#SEAT` — settings, produce no block
 4. `1.` enumerations
-5. four call-shaped tokens in a row — an auction table
+5. calls only (`1H P X XX AP ? -`, each optionally marked `!` `*` `^1`), at least two, an optional `W N E S` first line and `*` / `^1` note lines after — an auction table
 6. a bid table
 7. `|` pipe table
 8. a deal diagram
-9. `#+KEY: value` metadata — produces no block
+9. `#+KEY: value` metadata — produces no block; `render_html` reads `TITLE` (the page title) and `CSS` (stylesheets linked after bml.css, space separated)
 10. any other `#`-led block — a directive-only block, which usually yields nothing
 11. anything with a non-space character — a paragraph
 12. otherwise nothing
@@ -218,7 +220,8 @@ holding, using the fact that blocks and rows are SUBSLICES of the working text. 
 BUILT rather than sliced — a paste's output, a cloned paragraph — is detected by pointer range and
 reported with no position rather than a wrong one.
 
-The one limitation, taken deliberately: a source with LONE `` line endings is counted after
+The one limitation, taken deliberately: a source with LONE `
+` line endings is counted after
 normalisation, so its numbers shift. CRLF and LF are exact.
 
 ### 5.6 Checks that report without changing anything

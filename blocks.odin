@@ -371,3 +371,65 @@ all_digits :: proc(text: string) -> bool {
 	}
 	return len(text) > 0
 }
+
+/*
+A diagram with TEXT BEFORE OR AFTER IT in the same block - no blank line between: the text before, the
+diagram's header + hand lines (`head`, for `parse_diagram`) and the text after, each a block of its own.
+The diagram is the block's first run of hand lines, with the line above it as its header when that line
+has a header's field (`is_diagram_header`), so prose above it - "a diagram" - is not taken for one. Not a
+split when only whitespace is around it: that block is the whole-block test's.
+
+`classify_block` asks this before the whole-block test, which would take a line of text above the hands
+for the header (losing it and the real header), take a diagram plus ONE line of text below as a diagram
+and drop the text, and fail on two, leaving the block to the `#` branch as a nonsense bid table. The parts
+are slices of `text`, so offsets into them still map back to the source. The python reference's
+`_split_diagram` (bml.py).
+*/
+@(private)
+split_diagram :: proc(text: string) -> (before, head, after: string, ok: bool) {
+	is_hand :: proc(line: string) -> bool {
+		_, _, ok := parse_hand_line(line, context.temp_allocator)
+		return ok
+	}
+	// Where the line starting at `start` ends, without its newline.
+	line_end :: proc(text: string, start: int) -> int {
+		end := strings.index_byte(text[start:], '\n')
+		return len(text) if end < 0 else start + end
+	}
+
+	previous, start, end := -1, 0, 0
+	for {
+		end = line_end(text, start)
+		if is_hand(text[start:end]) {
+			break
+		}
+		if end >= len(text) {
+			return "", "", "", false
+		}
+		previous, start = start, end + 1
+	}
+	if previous >= 0 && is_diagram_header(text[previous:start - 1]) {
+		start = previous
+	}
+	for end < len(text) {
+		next := line_end(text, end + 1)
+		if !is_hand(text[end + 1:next]) {
+			break
+		}
+		end = next
+	}
+	before = text[:start - 1] if start > 0 else ""
+	after = text[end + 1:] if end < len(text) else ""
+	if len(strings.trim_space(before)) == 0 && len(strings.trim_space(after)) == 0 {
+		return "", "", "", false
+	}
+	return before, text[start:end], after, true
+}
+
+// Whether a line carries any of a diagram header's fields: dealer, vulnerability, board, lead, contract.
+@(private = "file")
+is_diagram_header :: proc(line: string) -> bool {
+	d: Diagram
+	parse_diagram_header(&d, line, context.temp_allocator)
+	return d.dealer != "" || d.vul != "" || d.board != "" || d.lead_suit != "" || d.has_contract
+}

@@ -40,7 +40,7 @@ main :: proc() {
 	for block in doc.blocks {
 		fmt.printf("  %-10v ", block.kind)
 		switch block.kind {
-		case .H1, .H2, .H3, .H4, .Paragraph:
+		case .H1, .H2, .H3, .H4, .Paragraph, .Caption:
 			fmt.println(block.text)
 		case .Bidtable:
 			print_bids(block.tree, 1)
@@ -50,6 +50,8 @@ main :: proc() {
 			fmt.println(len(block.rows), "rows")
 		case .Diagram:
 			fmt.println("deal diagram")
+		case .Box, .End_Box:
+			fmt.println()
 		}
 	}
 

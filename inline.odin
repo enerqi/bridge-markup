@@ -14,28 +14,242 @@ of being suppressed by a lookahead written to protect the tags.
 Two layers: the CONSTRUCTS that can contain further markup (links, strong, em, code) and the PLAIN
 substitutions that cannot (suit runs, the `!x` shorthand, long dashes).
 */
+//
+// `conditions` says this is a bid table's description (`write_bidtable`): its seat and vulnerability conditions
+// are tagged too (`condition_at`), inside links and styles as well.
 @(private)
-fill :: proc(parent: ^Element, text: string, allocator := context.allocator) {
+fill :: proc(parent: ^Element, text: string, allocator := context.allocator, conditions := Conditions.None) {
 	pos := 0
 	for {
 		match, found := find_inline(text, pos)
 		if !found {
-			write_plain(parent, text[pos:], allocator)
+			write_conditions(parent, text[pos:], allocator, conditions)
 			return
 		}
 		if match.start > pos {
-			write_plain(parent, text[pos:match.start], allocator)
+			write_conditions(parent, text[pos:match.start], allocator, conditions)
 		}
 
 		el := sub_element(parent, match.tag, allocator)
 		if match.tag == "a" {
 			set_attrib(el, "href", normalise_header_id(strings.trim_space(match.target), allocator))
-			fill(el, strings.trim_space(match.inner), allocator)
+			fill(el, strings.trim_space(match.inner), allocator, conditions)
 		} else {
-			fill(el, match.inner, allocator)
+			fill(el, match.inner, allocator, conditions)
 		}
 		pos = match.end
 	}
+}
+
+// Whether, and how, a description's conditions are tagged: the python reference's `_lone_seat` choice.
+@(private)
+Conditions :: enum {
+	None,
+	// The conditions, and a lone seat (`3rd`) only where it ends the text: `_LONE_SEAT_END_RE`.
+	Tagged,
+	// The row names seats already (`names_seats`): a lone seat anywhere but before a word that makes it
+	// something else (`4th suit`): `_LONE_SEAT_RE`.
+	Tagged_Seats,
+}
+
+/*
+Plain text with its CONDITIONS drawn as small tags, `<span class="bml-cond">`, in a bid table's description;
+just `write_plain` otherwise. A condition is where a meaning depends on the seat or the vulnerability: `(NV)` /
+`(VUL)`, a bare `NV` / `VUL`, a list of seats `1st/2nd`, `3rd seat` / `4th position`, `passed hand(s)`, and a
+lone seat (`lone_seat_at`). The python reference's `_COND_RE` and lone-seat patterns, matched by hand, the same
+way round: the first condition from the left - at the same place a `_COND_RE` one - and the next looked for
+after it.
+*/
+@(private = "file")
+write_conditions :: proc(parent: ^Element, text: string, allocator := context.allocator, conditions := Conditions.None) {
+	if conditions == .None {
+		write_plain(parent, text, allocator)
+		return
+	}
+	pos, i := 0, 0
+	for i < len(text) {
+		end := condition_at(text, i, conditions)
+		if end <= i {
+			i += 1
+			continue
+		}
+		write_plain(parent, text[pos:i], allocator)
+		tag := sub_element(parent, "span", allocator)
+		set_attrib(tag, "class", "bml-cond")
+		attach_text(tag, text[i:end], allocator)
+		i, pos = end, end
+	}
+	write_plain(parent, text[pos:], allocator)
+}
+
+// A word character as python's ASCII `\b` sees one.
+@(private = "file")
+is_ascii_word_byte :: proc(c: byte) -> bool {
+	return ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') || c == '_'
+}
+
+@(private = "file")
+ends_word :: proc(text: string, end: int) -> bool {
+	return end >= len(text) || !is_ascii_word_byte(text[end])
+}
+
+@(private = "file")
+is_ordinal :: proc(s: string) -> bool {
+	return strings.has_prefix(s, "1st") || strings.has_prefix(s, "2nd") || strings.has_prefix(s, "3rd") || strings.has_prefix(s, "4th")
+}
+
+// `1st/2nd/3rd` at `text[i]`: the end of the longest run of `/ordinal` that ends a word (a regex `(?:/...)+\b`
+// backs off one at a time), or -1.
+@(private = "file")
+seat_list_end :: proc(text: string, i: int) -> int {
+	if !is_ordinal(text[i:]) {
+		return -1
+	}
+	ends := make([dynamic]int, 0, 4, context.temp_allocator)
+	end := i + 3
+	for end + 1 < len(text) && text[end] == '/' && is_ordinal(text[end + 1:]) {
+		end += 4
+		append(&ends, end)
+	}
+	#reverse for candidate in ends {
+		if ends_word(text, candidate) {
+			return candidate
+		}
+	}
+	return -1
+}
+
+// `3rd seat` / `4th position` at `text[i]`: its end, or -1.
+@(private = "file")
+seat_place_end :: proc(text: string, i: int) -> int {
+	if !is_ordinal(text[i:]) {
+		return -1
+	}
+	for place in ([]string{" seat", " position"}) {
+		if strings.has_prefix(text[i + 3:], place) && ends_word(text, i + 3 + len(place)) {
+			return i + 3 + len(place)
+		}
+	}
+	return -1
+}
+
+// Does a description row name seats - a list or `Nth seat|position` (`_SEAT_CONTEXT_RE`)? Then a lone seat in it
+// is one too (`Conditions.Tagged_Seats`).
+@(private)
+names_seats :: proc(row: string) -> bool {
+	for i in 0 ..< len(row) {
+		if i > 0 && is_ascii_word_byte(row[i - 1]) {
+			continue
+		}
+		if seat_list_end(row, i) > 0 || seat_place_end(row, i) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// The end of the condition starting at `text[i]`, or -1 - the alternatives of `_COND_RE` in its order, then a
+// lone seat.
+@(private = "file")
+condition_at :: proc(text: string, i: int, conditions: Conditions) -> int {
+	rest := text[i:]
+	if strings.has_prefix(rest, "(NV)") {
+		return i + 4
+	}
+	if strings.has_prefix(rest, "(VUL)") {
+		return i + 5
+	}
+	// Every other alternative starts with `\b` at a word character.
+	if i > 0 && is_ascii_word_byte(text[i - 1]) {
+		return -1
+	}
+	for word in ([]string{"NV", "VUL"}) {
+		if strings.has_prefix(rest, word) && ends_word(text, i + len(word)) {
+			return i + len(word)
+		}
+	}
+	if end := seat_list_end(text, i); end > 0 {
+		return end
+	}
+	if end := seat_place_end(text, i); end > 0 {
+		return end
+	}
+	// `(?:un)?[Pp]assed hands?`
+	for start in ([]int{i + 2, i}) {
+		if start == i + 2 && !strings.has_prefix(rest, "un") {
+			continue
+		}
+		if start >= len(text) || (text[start] != 'P' && text[start] != 'p') || !strings.has_prefix(text[start + 1:], "assed hand") {
+			continue
+		}
+		end := start + len("Passed hand")
+		if end < len(text) && text[end] == 's' && ends_word(text, end + 1) {
+			return end + 1
+		}
+		if ends_word(text, end) {
+			return end
+		}
+	}
+	return lone_seat_at(text, i, conditions)
+}
+
+/*
+A LONE seat at `text[i]` (the `\b` before it already checked), `3rd`: its end, or -1. Not the start of a list
+(`3rd/`). With `.Tagged` only where it ends the text - the end, `.;:)]`, or ` NV` / ` VUL` after it; not before
+a comma or `or`, which list other things too (`1st or 2nd round control`, `(2nd, 3rd & 4th honour)`). With
+`.Tagged_Seats` anywhere but before a word that makes it something else (`4th suit`, `2nd round`).
+*/
+@(private = "file")
+lone_seat_at :: proc(text: string, i: int, conditions: Conditions) -> int {
+	if !is_ordinal(text[i:]) || !ends_word(text, i + 3) {
+		return -1
+	}
+	end := i + 3
+	if end < len(text) && text[end] == '/' {
+		return -1
+	}
+	after := text[end:]
+	if conditions == .Tagged {
+		if after == "" || strings.index_byte(".;:)]", after[0]) >= 0 {
+			return end
+		}
+		for word in ([]string{" NV", " VUL"}) {
+			if strings.has_prefix(after, word) && ends_word(text, end + len(word)) {
+				return end
+			}
+		}
+		return -1
+	}
+	Noun :: struct {
+		word:   string,
+		plural: bool,
+	}
+	NOUNS :: [?]Noun {
+		{"suit", true},
+		{"round", true},
+		{"ask", false},
+		{"honour", true},
+		{"highest", false},
+		{"step", false},
+		{"bid", true},
+		{"break", false},
+		{"from", false},
+		{"shortage", false},
+		{"double", false},
+		{"card", true},
+		{"hand", true},
+	}
+	nouns := NOUNS
+	for noun in nouns {
+		if len(after) < 1 + len(noun.word) || after[0] != ' ' || !strings.has_prefix(after[1:], noun.word) {
+			continue
+		}
+		past := end + 1 + len(noun.word)
+		if ends_word(text, past) || (noun.plural && past < len(text) && text[past] == 's' && ends_word(text, past + 1)) {
+			return -1
+		}
+	}
+	return end
 }
 
 /*
@@ -95,6 +309,11 @@ find_inline :: proc(text: string, from: int) -> (match: Inline_Match, found: boo
 				if m, ok := match_delimited(text, i, '=', "code"); ok {
 					return m, true
 				}
+			}
+		case '_':
+			// `_underline_` needs no boundary: a hand's honours are underlined inside a word, `A_*K*_JTx`.
+			if m, ok := match_delimited(text, i, '_', "u"); ok {
+				return m, true
 			}
 		}
 	}
